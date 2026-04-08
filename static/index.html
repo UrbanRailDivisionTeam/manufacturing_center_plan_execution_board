@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>城轨制造中心计划执行监控</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;family=Noto+Serif+SC:wght@700;900&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0a0a0a;
+            color: #e2e2e2;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Enforce 16:9 Aspect Ratio Container */
+        .canvas-16-9 {
+            aspect-ratio: 16 / 9;
+            width: 100vw;
+            max-height: 100vh;
+            max-width: calc(100vh * 16 / 9);
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            position: relative;
+            background-image: linear-gradient(rgba(199, 0, 25, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(199, 0, 25, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+
+        .font-siyuan {
+            font-family: 'Noto Serif SC', serif;
+        }
+
+        .font-space {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+
+        .glass-panel {
+            background: rgba(26, 26, 26, 0.4);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .red-glow {
+            text-shadow: 0 0 15px rgba(199, 0, 25, 0.6);
+        }
+
+        .metric-card {
+            border-left: 4px solid #C70019;
+        }
+
+        .text-red-crrc {
+            color: #C70019;
+        }
+
+        .bg-red-crrc {
+            background-color: #C70019;
+        }
+    </style>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "crrc-red": "#C70019",
+                        "surface": "#0a0a0a",
+                        "panel": "#1a1a1a",
+                    },
+                    fontFamily: {
+                        "headline": ["Space Grotesk"],
+                        "body": ["Inter"],
+                    },
+                    borderRadius: { "DEFAULT": "0rem" },
+                },
+            },
+        }
+    </script>
+    <script>
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/api/table-data');
+                const data = await response.json();
+                
+                console.log('[DEBUG] API response:', data);
+                
+                if (data.error) {
+                    console.error('[DEBUG] API error:', data.error);
+                }
+                
+                const summary = data.summary || {};
+                document.getElementById('monthly-fulfilled-rate').innerHTML = summary.month_beat_rate + '<small class="text-base font-normal">%</small>';
+                document.getElementById('monthly-punctual-rate').innerHTML = summary.month_on_time_rate + '<small class="text-base font-normal">%</small>';
+                document.getElementById('daily-fulfilled-rate').innerHTML = summary.today_beat_rate + '<small class="text-base font-normal">%</small>';
+                document.getElementById('daily-punctual-rate').innerHTML = summary.today_on_time_rate + '<small class="text-base font-normal">%</small>';
+                document.getElementById('assembly-month-beat').innerHTML = (summary.month_beat_rate || '--') + '%';
+                document.getElementById('assembly-month-onTime').innerHTML = (summary.month_on_time_rate || '--') + '%';
+                document.getElementById('assembly-today-beat').innerHTML = (summary.today_beat_rate || '--') + '%';
+                document.getElementById('assembly-today-onTime').innerHTML = (summary.today_on_time_rate || '--') + '%';
+            } catch (e) {
+                console.error('Failed to fetch dashboard data:', e);
+            }
+        }
+        updateDashboard();
+        setInterval(updateDashboard, 30000);
+    </script>
+</head>
+
+<body class="bg-surface">
+    <div class="canvas-16-9">
+        <!-- Header Section: Center Core Metrics (1-5) -->
+        <header class="grid grid-cols-12 gap-6 h-[15%]">
+            <div class="col-span-3 flex flex-col justify-center">
+                <h1 class="text-3xl font-siyuan font-black tracking-tight text-white uppercase leading-tight">
+                    城轨制造中心<br />计划执行监控</h1>
+                <div class="flex items-center gap-2 mt-2">
+                    <span class="w-2 h-2 bg-crrc-red animate-pulse"></span>
+                    <p class="text-[10px] font-space tracking-[0.4em] text-crrc-red font-bold uppercase"></p>
+                </div>
+            </div>
+            <div class="col-span-9 grid grid-cols-4 gap-4">
+                <!-- Metric 2 -->
+                <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
+                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本月节拍兑现率</span>
+                    <div class="flex items-baseline gap-2">
+                        <span id="monthly-fulfilled-rate"
+                            class="text-4xl font-space font-black text-white red-glow">--<small
+                                class="text-base font-normal">%</small></span>
+                        <span id="monthly-fulfilled-change" class="text-xs text-zinc-400 font-bold">--</span>
+                    </div>
+                </div>
+                <!-- Metric 3 -->
+                <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
+                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本月报工准时率</span>
+                    <div class="flex items-baseline gap-2">
+                        <span id="monthly-punctual-rate" class="text-4xl font-space font-black text-white">--<small
+                                class="text-base font-normal">%</small></span>
+                        <span id="monthly-punctual-change" class="text-xs text-zinc-400 font-bold">--</span>
+                    </div>
+                </div>
+                <!-- Metric 4 -->
+                <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
+                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本日节拍兑现率</span>
+                    <div class="flex items-baseline gap-2">
+                        <span id="daily-fulfilled-rate" class="text-4xl font-space font-black text-white">--<small
+                                class="text-base font-normal">%</small></span>
+                        <span id="daily-fulfilled-change" class="text-xs text-zinc-400 font-bold">--</span>
+                    </div>
+                </div>
+                <!-- Metric 5 -->
+                <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
+                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本日报工准时率</span>
+                    <div class="flex items-baseline gap-2">
+                        <span id="daily-punctual-rate" class="text-4xl font-space font-black text-white">--<small
+                                class="text-base font-normal">%</small></span>
+                        <span id="daily-punctual-change" class="text-xs text-zinc-400 font-bold">--</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+        <!-- Main Content Area (6-11) -->
+        <main class="grid grid-cols-2 gap-6 flex-1 min-h-0">
+            <!-- Left Area: Assembly Metrics -->
+            <div class="flex flex-col gap-4 h-full">
+                <!-- Metric 6: Assembly Monitor Card -->
+                <section class="glass-panel p-5 flex flex-col gap-4 metric-card shrink-0">
+                    <h2
+                        class="text-[22px] font-bold text-white border-b border-zinc-800 pb-3 flex items-center justify-between">
+                        <span class="flex items-center gap-2"><span class="w-1.5 h-4 bg-crrc-red"></span> 总成执行监控</span>
+                        <span class="text-[10px] font-space text-crrc-red font-bold tracking-widest"></span>
+                    </h2>
+                    <div class="grid grid-cols-4 gap-4 py-2">
+                        <div class="border-r border-zinc-800">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月节拍</p>
+                            <p id="assembly-month-beat" class="text-3xl font-space font-bold text-white">--%</p>
+                        </div>
+                        <div class="border-r border-zinc-800 px-2">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月报工</p>
+                            <p id="assembly-month-onTime" class="text-3xl font-space font-bold text-white">--%</p>
+                        </div>
+                        <div class="border-r border-zinc-800 px-2">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日节拍</p>
+                            <p id="assembly-today-beat" class="text-3xl font-space font-bold text-white">--%</p>
+                        </div>
+                        <div class="px-2">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日报工</p>
+                            <p id="assembly-today-onTime" class="text-3xl font-space font-bold text-white">--%</p>
+                        </div>
+                    </div>
+                </section>
+                <!-- Metric 7-8: Assembly Chart -->
+                <section class="glass-panel p-6 flex-1 flex flex-col min-h-0">
+                    <h2
+                        class="text-[22px] font-bold text-zinc-400 mb-6 uppercase tracking-[0.2em] flex items-center gap-2">
+                        <span class="w-1 h-3 bg-crrc-red"></span> 总成 7 日趋势分析
+                    </h2>
+                    <div class="flex-1 flex items-end justify-between gap-6 pb-2 px-4">
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 80%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 90%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.18</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 85%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 88%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.19</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 92%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 95%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.20</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 78%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 82%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.21</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red red-glow" style="height: 94%"></div>
+                                <div class="flex-1 bg-zinc-300" style="height: 97%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-400 font-bold">TODAY</span>
+                        </div>
+                    </div>
+                    <div
+                        class="mt-4 flex justify-center gap-10 text-[9px] text-zinc-500 font-bold border-t border-zinc-800/50 pt-4">
+                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-crrc-red"></span> TAKT</span>
+                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-zinc-600"></span>
+                            PUNCTUALITY</span>
+                    </div>
+                </section>
+            </div>
+            <!-- Right Area: Delivery Metrics -->
+            <div class="flex flex-col gap-4 h-full">
+                <!-- Metric 9: Delivery Monitor Card -->
+                <section class="glass-panel p-5 flex flex-col gap-4 metric-card shrink-0">
+                    <h2
+                        class="text-[22px] font-bold text-white border-b border-zinc-800 pb-3 flex items-center justify-between">
+                        <span class="flex items-center gap-2"><span class="w-1.5 h-4 bg-crrc-red"></span> 交车执行监控</span>
+                        <span class="text-[10px] font-space text-crrc-red font-bold tracking-widest"></span>
+                    </h2>
+                    <div class="grid grid-cols-4 gap-4 py-2">
+                        <div class="border-r border-zinc-800">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月节拍</p>
+                            <p class="text-3xl font-space font-bold text-white">95.4%</p>
+                        </div>
+                        <div class="border-r border-zinc-800 px-2">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月报工</p>
+                            <p class="text-3xl font-space font-bold text-white">98.2%</p>
+                        </div>
+                        <div class="border-r border-zinc-800 px-2">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日节拍</p>
+                            <p class="text-3xl font-space font-bold text-white">96.0%</p>
+                        </div>
+                        <div class="px-2">
+                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日报工</p>
+                            <p class="text-3xl font-space font-bold text-white">99.1%</p>
+                        </div>
+                    </div>
+                </section>
+                <!-- Metric 10-11: Delivery Chart -->
+                <section class="glass-panel p-6 flex-1 flex flex-col min-h-0">
+                    <h2
+                        class="text-[22px] font-bold text-zinc-400 mb-6 uppercase tracking-[0.2em] flex items-center gap-2">
+                        <span class="w-1 h-3 bg-crrc-red"></span> 交车 7 日趋势分析
+                    </h2>
+                    <div class="flex-1 flex items-end justify-between gap-6 pb-2 px-4">
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 88%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 92%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.18</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 90%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 94%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.19</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 82%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 88%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.20</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red/20 border-t border-crrc-red/40" style="height: 95%">
+                                </div>
+                                <div class="flex-1 bg-zinc-800" style="height: 98%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-600">10.21</span>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-3 items-center h-full justify-end">
+                            <div class="w-full flex items-end gap-1.5 h-full max-h-[160px]">
+                                <div class="flex-1 bg-crrc-red red-glow" style="height: 96%"></div>
+                                <div class="flex-1 bg-zinc-300" style="height: 99%"></div>
+                            </div>
+                            <span class="text-[10px] font-space text-zinc-400 font-bold">TODAY</span>
+                        </div>
+                    </div>
+                    <div
+                        class="mt-4 flex justify-center gap-10 text-[9px] text-zinc-500 font-bold border-t border-zinc-800/50 pt-4">
+                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-crrc-red"></span> TAKT</span>
+                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-zinc-600"></span>
+                            PUNCTUALITY</span>
+                    </div>
+                </section>
+            </div>
+        </main>
+        <!-- Bottom Ranking Section (12-18) -->
+        <footer class="grid grid-cols-2 gap-6 h-[25%] min-h-0">
+            <!-- Metric 12-14: Takt Ranking -->
+            <section class="glass-panel p-5 flex flex-col min-h-0">
+                <h2 class="text-[22px] font-bold text-white mb-3 flex items-center justify-between">
+                    <span class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-sm text-crrc-red">warning</span>
+                        本月节拍兑现率垫底班组 (BOTTOM 7)
+                    </span>
+                    <span class="text-[16px] font-space text-zinc-500 tracking-wider">TARGET: 90%+</span>
+                </h2>
+                <div class="flex-1 flex flex-col min-h-0">
+                    <div class="flex items-center px-4 py-2 text-[16px] font-bold text-zinc-500 bg-white/5 uppercase">
+                        <span class="w-12">排名</span>
+                        <span class="flex-1">班组名称</span>
+                        <span class="w-24 text-right">兑现率</span>
+                        <span class="w-20 text-right">环比</span>
+                    </div>
+                    <div class="flex-1 overflow-hidden">
+                        <div class="flex items-center px-4 py-2.5 text-[16px] border-b border-zinc-800/30">
+                            <span class="w-12 font-space text-crrc-red font-black">01</span>
+                            <span class="flex-1 text-zinc-300">转向架装配一班</span>
+                            <span class="w-24 text-right font-space text-white font-bold">72.4%</span>
+                            <span class="w-20 text-right text-crrc-red font-bold text-[14px]">-5.2%</span>
+                        </div>
+                        <div class="flex items-center px-4 py-2.5 text-[16px] border-b border-zinc-800/30">
+                            <span class="w-12 font-space text-crrc-red font-black">02</span>
+                            <span class="flex-1 text-zinc-300">车体焊接三组</span>
+                            <span class="w-24 text-right font-space text-white font-bold">74.8%</span>
+                            <span class="w-20 text-right text-crrc-red font-bold text-[14px]">-3.1%</span>
+                        </div>
+                        <div class="flex items-center px-4 py-2.5 text-[16px]">
+                            <span class="w-12 font-space text-crrc-red font-black">03</span>
+                            <span class="flex-1 text-zinc-300">内装木工二组</span>
+                            <span class="w-24 text-right font-space text-white font-bold">78.1%</span>
+                            <span class="w-20 text-right text-crrc-red font-bold text-[14px]">-2.5%</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <!-- Metric 15-18: Punctuality Ranking -->
+            <section class="glass-panel p-5 flex flex-col min-h-0">
+                <h2 class="text-[22px] font-bold text-white mb-3 flex items-center justify-between">
+                    <span class="flex items-center gap-2">
+                        <span class="material-symbols-outlined text-sm text-crrc-red">schedule</span>
+                        本月报工准时率垫底班组 (BOTTOM 7)
+                    </span>
+                    <span class="text-[16px] font-space text-zinc-500 tracking-wider">TARGET: 95%+</span>
+                </h2>
+                <div class="flex-1 flex flex-col min-h-0">
+                    <div class="flex items-center px-4 py-2 text-[16px] font-bold text-zinc-500 bg-white/5 uppercase">
+                        <span class="w-12">排名</span>
+                        <span class="flex-1">班组名称</span>
+                        <span class="w-24 text-right">准时率</span>
+                        <span class="w-20 text-right">环比</span>
+                    </div>
+                    <div class="flex-1 overflow-hidden">
+                        <div class="flex items-center px-4 py-2.5 text-[16px] border-b border-zinc-800/30">
+                            <span class="w-12 font-space text-crrc-red font-black">01</span>
+                            <span class="flex-1 text-zinc-300">布线电气一班</span>
+                            <span class="w-24 text-right font-space text-white font-bold">81.5%</span>
+                            <span class="w-20 text-right text-crrc-red font-bold text-[14px]">-4.2%</span>
+                        </div>
+                        <div class="flex items-center px-4 py-2.5 text-[16px] border-b border-zinc-800/30">
+                            <span class="w-12 font-space text-crrc-red font-black">02</span>
+                            <span class="flex-1 text-zinc-300">预组装三班</span>
+                            <span class="w-24 text-right font-space text-white font-bold">83.2%</span>
+                            <span class="w-20 text-right text-crrc-red font-bold text-[14px]">-2.8%</span>
+                        </div>
+                        <div class="flex items-center px-4 py-2.5 text-[16px]">
+                            <span class="w-12 font-space text-crrc-red font-black">03</span>
+                            <span class="flex-1 text-zinc-300">总装二班</span>
+                            <span class="w-24 text-right font-space text-white font-bold">85.0%</span>
+                            <span class="w-20 text-right text-crrc-red font-bold text-[14px]">-1.5%</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </footer>
+        <!-- HUD Decorative elements -->
+        <div class="absolute inset-0 pointer-events-none border-[1px] border-white/5 z-50"></div>
+        <div class="absolute top-0 left-0 w-16 h-16 border-t-4 border-l-4 border-crrc-red/60 m-2"></div>
+        <div class="absolute top-0 right-0 w-16 h-16 border-t-4 border-r-4 border-crrc-red/60 m-2"></div>
+        <div class="absolute bottom-0 left-0 w-16 h-16 border-b-4 border-l-4 border-crrc-red/60 m-2"></div>
+        <div class="absolute bottom-0 right-0 w-16 h-16 border-b-4 border-r-4 border-crrc-red/60 m-2"></div>
+    </div>
+</body>
+
+</html>
