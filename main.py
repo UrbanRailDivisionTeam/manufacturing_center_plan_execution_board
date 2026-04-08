@@ -105,12 +105,25 @@ from collections import Counter
 # 3. API 接口部分
 # ============================================================
 
+ASSEMBLY_TEAMS = [
+    "车内电工班", "车外电工班", "预组装班", "车内钳工班", "车外钳工班",
+    "粘接综合班", "线槽地板班", "内装一班", "内装二班", "调车班",
+    "质检班", "设备工位", "车门工位", "辅助工位"
+]
+
+DELIVERY_TEAMS = [
+    "校线一班", "校线二班", "调试一班", "调试二班", "调试三班",
+    "调试四班", "落车班"
+]
+
 @get("/api/table-data")
-async def get_table_data(team: Optional[str] = None) -> dict:
+async def get_table_data(team: Optional[str] = None, assembly: bool = False, delivery: bool = False) -> dict:
     """
     获取表格数据的主API接口
     参数:
         - team: 班组名称过滤（控制整个页面的所有数据）
+        - assembly: 是否只获取总成车间数据
+        - delivery: 是否只获取交车车间数据
     返回:
         - table_data: 今日执行队列数据
         - summary: 汇总统计数据
@@ -123,6 +136,12 @@ async def get_table_data(team: Optional[str] = None) -> dict:
         # 查询当前月及近7天的生产计划数据
         # 包含字段：项目号、车号、节车号、排程时间、计划时间、实际时间、班组、是否兑现节拍、是否准时开完工
         team_filter = f"AND BILL.`班组名称` = '{team}'" if team else ""
+        assembly_filter = f"AND BILL.`班组名称` IN {tuple(ASSEMBLY_TEAMS)}" if assembly and not team else ""
+        delivery_filter = f"AND BILL.`班组名称` IN {tuple(DELIVERY_TEAMS)}" if delivery and not team else ""
+        if assembly and not team:
+            team_filter = assembly_filter
+        elif delivery and not team:
+            team_filter = delivery_filter
         query = f"""
             SELECT 
                 today() as ch_today,  -- 获取数据库当前日期
@@ -155,6 +174,12 @@ async def get_table_data(team: Optional[str] = None) -> dict:
         # ===================== 3.2 节拍兑现率趋势查询 =====================
         # 查询近7天的节拍兑现率，按日期分组
         team_filter = f"AND BILL.`班组名称` = '{team}'" if team else ""
+        assembly_filter = f"AND BILL.`班组名称` IN {tuple(ASSEMBLY_TEAMS)}" if assembly and not team else ""
+        delivery_filter = f"AND BILL.`班组名称` IN {tuple(DELIVERY_TEAMS)}" if delivery and not team else ""
+        if assembly and not team:
+            team_filter = assembly_filter
+        elif delivery and not team:
+            team_filter = delivery_filter
         trend_query = f"""
             SELECT 
                 toDate(BILL.`计划开始时间`) as plan_date,  -- 计划开工日期
@@ -174,6 +199,12 @@ async def get_table_data(team: Optional[str] = None) -> dict:
         # ===================== 3.3 准时开完工率趋势查询 =====================
         # 查询近7天的准时开完工率，按日期分组
         team_filter = f"AND BILL.`班组名称` = '{team}'" if team else ""
+        assembly_filter = f"AND BILL.`班组名称` IN {tuple(ASSEMBLY_TEAMS)}" if assembly and not team else ""
+        delivery_filter = f"AND BILL.`班组名称` IN {tuple(DELIVERY_TEAMS)}" if delivery and not team else ""
+        if assembly and not team:
+            team_filter = assembly_filter
+        elif delivery and not team:
+            team_filter = delivery_filter
         ontime_trend_query = f"""
             SELECT 
                 toDate(BILL.`计划开始时间`) as plan_date,  -- 计划开工日期
@@ -441,6 +472,82 @@ async def get_table_data(team: Optional[str] = None) -> dict:
             }
         }
 
+@get("/api/team-ranking")
+async def get_team_ranking() -> dict:
+    """
+    获取本月各班组的节拍兑现率和报工准时率排名
+    返回倒数前7名班组
+    """
+    try:
+        client = get_ch_client()
+        
+        all_teams = ASSEMBLY_TEAMS + DELIVERY_TEAMS
+        
+        beat_ranking_query = f"""
+            SELECT 
+                BILL.`班组名称` as team_name,
+                COUNT(*) as total,
+                sum(if(BILL.`是否兑现节拍` = '是', 1, 0)) as beat_ok
+            FROM 
+                dwd.beat_fulfillment_rate BILL 
+            WHERE 
+                toStartOfMonth(toDate(BILL.`计划开始时间`)) = toStartOfMonth(today())
+                AND BILL.`班组名称` IN {tuple(all_teams)}
+            GROUP BY BILL.`班组名称`
+            HAVING total > 0
+            ORDER BY beat_ok / total ASC
+            LIMIT 7
+        """
+        beat_result = client.query(beat_ranking_query)
+        
+        on_time_ranking_query = f"""
+            SELECT 
+                BILL.`班组名称` as team_name,
+                COUNT(*) as total,
+                sum(if(BILL.`是否准时开完工` = '是', 1, 0)) as on_time_ok
+            FROM 
+                dwd.beat_fulfillment_rate BILL 
+            WHERE 
+                toStartOfMonth(toDate(BILL.`计划开始时间`)) = toStartOfMonth(today())
+                AND BILL.`班组名称` IN {tuple(all_teams)}
+            GROUP BY BILL.`班组名称`
+            HAVING total > 0
+            ORDER by on_time_ok / total ASC
+            LIMIT 7
+        """
+        on_time_result = client.query(on_time_ranking_query)
+        
+        beat_ranking = []
+        for row in beat_result.named_results():
+            total = row['total']
+            beat_ok = row['beat_ok']
+            rate = round((beat_ok / total * 100), 1) if total > 0 else 0
+            beat_ranking.append({
+                "team_name": row['team_name'],
+                "rate": rate
+            })
+        
+        on_time_ranking = []
+        for row in on_time_result.named_results():
+            total = row['total']
+            on_time_ok = row['on_time_ok']
+            rate = round((on_time_ok / total * 100), 1) if total > 0 else 0
+            on_time_ranking.append({
+                "team_name": row['team_name'],
+                "rate": rate
+            })
+        
+        return {
+            "beat_ranking": beat_ranking,
+            "on_time_ranking": on_time_ranking
+        }
+    except Exception as e:
+        print(f"Error fetching team ranking: {e}")
+        return {
+            "beat_ranking": [],
+            "on_time_ranking": []
+        }
+
 # ============================================================
 # 4. 静态页面路由
 # ============================================================
@@ -460,7 +567,7 @@ async def index_html() -> Response:
 # ============================================================
 
 app = Litestar(
-    route_handlers=[index_html, get_table_data],  # 注册路由处理器
+    route_handlers=[index_html, get_table_data, get_team_ranking],  # 注册路由处理器
     debug=True,  # 开启调试模式
     static_files_config=[
         StaticFilesConfig(
