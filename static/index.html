@@ -7,12 +7,8 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <title>城轨制造中心计划执行监控</title>
     <script src="/static/tailwindcss"></script>
-    <link
-        href="/static/googleapis"
-        rel="stylesheet" />
-    <link
-        href="/static/googleapis2"
-        rel="stylesheet" />
+    <link href="/static/googleapis" rel="stylesheet" />
+    <link href="/static/googleapis2" rel="stylesheet" />
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -104,19 +100,19 @@
                 const allData = await allDataResp.json();
                 const assemblyData = await assemblyDataResp.json();
                 const deliveryData = await deliveryDataResp.json();
-                
+
                 console.log('[DEBUG] API response:', allData);
                 console.log('[DEBUG] Assembly API response:', assemblyData);
                 console.log('[DEBUG] Delivery API response:', deliveryData);
-                
+
                 if (allData.error) {
                     console.error('[DEBUG] API error:', allData.error);
                 }
-                
+
                 const summary = allData.summary || {};
                 const assemblySummary = assemblyData.summary || {};
                 const deliverySummary = deliveryData.summary || {};
-                
+
                 document.getElementById('monthly-fulfilled-rate').innerHTML = summary.month_beat_rate + '<small class="text-base font-normal">%</small>';
                 document.getElementById('monthly-punctual-rate').innerHTML = summary.month_on_time_rate + '<small class="text-base font-normal">%</small>';
                 document.getElementById('daily-fulfilled-rate').innerHTML = summary.today_beat_rate + '<small class="text-base font-normal">%</small>';
@@ -129,10 +125,10 @@
                 document.getElementById('delivery-month-onTime').innerHTML = (deliverySummary.month_on_time_rate || '--') + '%';
                 document.getElementById('delivery-today-beat').innerHTML = (deliverySummary.today_beat_rate || '--') + '%';
                 document.getElementById('delivery-today-onTime').innerHTML = (deliverySummary.today_on_time_rate || '--') + '%';
-                
+
                 renderAssemblyTrend(assemblySummary);
                 renderDeliveryTrend(deliverySummary);
-                
+
                 const teamRankingResp = await fetch('/api/team-ranking');
                 const teamRankingData = await teamRankingResp.json();
                 renderTeamRanking(teamRankingData);
@@ -140,60 +136,60 @@
                 console.error('Failed to fetch dashboard data:', e);
             }
         }
-        
+
         function renderAssemblyTrend(summary) {
             const beatData = summary.last_7_days_beat || [];
             const onTimeData = summary.last_7_days_on_time || [];
             renderTrendChart('assembly-trend-container', beatData, onTimeData, 'assembly');
         }
-        
+
         function renderDeliveryTrend(summary) {
             const beatData = summary.last_7_days_beat || [];
             const onTimeData = summary.last_7_days_on_time || [];
             renderTrendChart('delivery-trend-container', beatData, onTimeData, 'delivery');
         }
-        
+
         function renderTrendChart(containerId, beatData, onTimeData, prefix) {
             const container = document.getElementById(containerId);
             if (!container) return;
-            
+
             let html = '';
             const today = new Date();
             const todayStr = (today.getMonth() + 1).toString().padStart(2, '0') + '-' + today.getDate().toString().padStart(2, '0');
-            
+
             for (let i = 0; i < 7; i++) {
                 const beatRate = beatData[i] ? beatData[i].rate : 0;
                 const onTimeRate = onTimeData[i] ? onTimeData[i].rate : 0;
                 const dateLabel = beatData[i] ? beatData[i].date : '--';
                 const isToday = i === 6;
-                
+
                 const beatHeight = Math.max(beatRate, 5);
                 const onTimeHeight = Math.max(onTimeRate, 5);
-                
-                const beatClass = isToday ? 'bg-crrc-red red-glow' : 'bg-crrc-red/20 border-t border-crrc-red/40';
-                const onTimeClass = isToday ? 'bg-zinc-300' : 'bg-zinc-800';
-                const dateClass = isToday ? 'text-white' : 'text-zinc-500';
-                
-                html += `<div class="group flex-1 flex flex-col gap-3 items-center h-full justify-end cursor-pointer relative">
-                    <div class="absolute -top-8 left-1/2 -translate-x-1/2 flex flex-col items-center opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900/90 px-2 py-1 rounded border border-zinc-700 z-10">
-                        <span class="text-[12px] font-siyuan text-crrc-red">节拍: ${beatRate}%</span>
-                        <span class="text-[12px] font-siyuan text-zinc-300">准时: ${onTimeRate}%</span>
+
+                const beatClass = isToday ? 'bg-crrc-red red-glow' : 'bg-crrc-red border-t border-crrc-red/40';
+                const onTimeClass = isToday ? 'bg-zinc-300' : 'bg-zinc-300';
+                const dateClass = 'text-white';
+
+                html += `<div class="group flex-1 flex flex-col items-center h-full justify-end cursor-pointer relative">
+                    <div class="w-full flex items-end gap-1.5 h-full max-h-[120px] relative">
+                        <div class="flex-1 ${beatClass} relative" style="height: ${beatHeight}%">
+                            <span class="absolute -top-5 left-1/2 -translate-x-1/2 text-[14px] text-white">${beatRate}%</span>
+                        </div>
+                        <div class="flex-1 ${onTimeClass} relative" style="height: ${onTimeHeight}%">
+                            <span class="absolute -top-5 left-1/2 -translate-x-1/2 text-[14px] text-white">${onTimeRate}%</span>
+                        </div>
                     </div>
-                    <div class="w-full flex items-end gap-1.5 h-full max-h-[140px]">
-                        <div class="flex-1 ${beatClass}" style="height: ${beatHeight}%"></div>
-                        <div class="flex-1 ${onTimeClass}" style="height: ${onTimeHeight}%"></div>
-                    </div>
-                    <span class="text-[14px] font-siyuan ${dateClass}">${isToday ? todayStr : dateLabel}</span>
+                    <span class="mt-2 text-[16px] font-siyuan ${dateClass}">${isToday ? todayStr : dateLabel}</span>
                 </div>`;
             }
-            
+
             container.innerHTML = html;
         }
-        
+
         function renderTeamRanking(data) {
             const beatContainer = document.getElementById('beat-ranking-container');
             const onTimeContainer = document.getElementById('on-time-ranking-container');
-            
+
             if (beatContainer && data.beat_ranking) {
                 let beatHtml = '';
                 data.beat_ranking.forEach((item, index) => {
@@ -201,13 +197,13 @@
                     const isLast = index === data.beat_ranking.length - 1;
                     beatHtml += `<div class="flex items-center px-4 py-2.5 text-[16px] ${isLast ? '' : 'border-b border-zinc-800/30'}">
                         <span class="w-12 font-space text-crrc-red font-black">${rank}</span>
-                        <span class="flex-1 text-zinc-300">${item.team_name}</span>
+                        <span class="flex-1 text-white">${item.team_name}</span>
                         <span class="w-24 text-right font-space text-white font-bold">${item.rate}%</span>
                     </div>`;
                 });
                 beatContainer.innerHTML = beatHtml;
             }
-            
+
             if (onTimeContainer && data.on_time_ranking) {
                 let onTimeHtml = '';
                 data.on_time_ranking.forEach((item, index) => {
@@ -215,14 +211,14 @@
                     const isLast = index === data.on_time_ranking.length - 1;
                     onTimeHtml += `<div class="flex items-center px-4 py-2.5 text-[16px] ${isLast ? '' : 'border-b border-zinc-800/30'}">
                         <span class="w-12 font-space text-crrc-red font-black">${rank}</span>
-                        <span class="flex-1 text-zinc-300">${item.team_name}</span>
+                        <span class="flex-1 text-white">${item.team_name}</span>
                         <span class="w-24 text-right font-space text-white font-bold">${item.rate}%</span>
                     </div>`;
                 });
                 onTimeContainer.innerHTML = onTimeHtml;
             }
         }
-        
+
         updateDashboard();
         setInterval(updateDashboard, 30000);
     </script>
@@ -231,9 +227,9 @@
 <body class="bg-surface">
     <div class="canvas-16-9">
         <!-- Header Section: Center Core Metrics (1-5) -->
-        <header class="grid grid-cols-12 gap-6 h-[15%]">
+        <header class="grid grid-cols-12 gap-6 h-[15%] -mt-1">
             <div class="col-span-3 flex flex-col justify-center">
-                <h1 class="text-3xl font-siyuan font-black tracking-tight text-white uppercase leading-tight">
+                <h1 class="text-4xl font-siyuan font-black tracking-tight text-white uppercase leading-tight">
                     城轨制造中心<br />计划执行监控</h1>
                 <div class="flex items-center gap-2 mt-2">
                     <span class="w-2 h-2 bg-crrc-red animate-pulse"></span>
@@ -243,7 +239,8 @@
             <div class="col-span-9 grid grid-cols-4 gap-4">
                 <!-- Metric 2 -->
                 <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
-                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本月节拍兑现率</span>
+                    <span
+                        class="text-[24px] text-white font-siyuan font-black uppercase tracking-wider mb-2">中心本月节拍兑现率</span>
                     <div class="flex items-baseline gap-2">
                         <span id="monthly-fulfilled-rate"
                             class="text-4xl font-space font-black text-white red-glow">--<small
@@ -253,7 +250,8 @@
                 </div>
                 <!-- Metric 3 -->
                 <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
-                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本月报工准时率</span>
+                    <span
+                        class="text-[24px] text-white font-siyuan font-black uppercase tracking-wider mb-2">中心本月开完工准时率</span>
                     <div class="flex items-baseline gap-2">
                         <span id="monthly-punctual-rate" class="text-4xl font-space font-black text-white">--<small
                                 class="text-base font-normal">%</small></span>
@@ -262,7 +260,8 @@
                 </div>
                 <!-- Metric 4 -->
                 <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
-                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本日节拍兑现率</span>
+                    <span
+                        class="text-[24px] text-white font-siyuan font-black uppercase tracking-wider mb-2">中心本日节拍兑现率</span>
                     <div class="flex items-baseline gap-2">
                         <span id="daily-fulfilled-rate" class="text-4xl font-space font-black text-white">--<small
                                 class="text-base font-normal">%</small></span>
@@ -271,7 +270,8 @@
                 </div>
                 <!-- Metric 5 -->
                 <div class="glass-panel p-4 flex flex-col justify-center border-t-2 border-crrc-red">
-                    <span class="text-[22px] text-zinc-500 font-bold uppercase tracking-wider mb-2">中心本日报工准时率</span>
+                    <span
+                        class="text-[24px] text-white font-siyuan font-black uppercase tracking-wider mb-2">中心本日开完工准时率</span>
                     <div class="flex items-baseline gap-2">
                         <span id="daily-punctual-rate" class="text-4xl font-space font-black text-white">--<small
                                 class="text-base font-normal">%</small></span>
@@ -281,48 +281,49 @@
             </div>
         </header>
         <!-- Main Content Area (6-11) -->
-        <main class="grid grid-cols-2 gap-6 flex-1 min-h-0">
+        <main class="grid grid-cols-2 gap-6 flex-1 min-h-0 -mt-3">
             <!-- Left Area: Assembly Metrics -->
             <div class="flex flex-col gap-4 h-full">
                 <!-- Metric 6: Assembly Monitor Card -->
                 <section class="glass-panel p-5 flex flex-col gap-4 metric-card shrink-0">
                     <h2
-                        class="text-[22px] font-bold text-white border-b border-zinc-800 pb-3 flex items-center justify-between">
-                        <span class="flex items-center gap-2"><span class="w-1.5 h-4 bg-crrc-red"></span> 总成执行监控</span>
+                        class="text-[28px] font-black text-white border-b border-zinc-800 pb-3 flex items-center justify-between">
+                        <span class="flex items-center gap-2 font-siyuan"><span class="w-1.5 h-4 bg-crrc-red"></span>
+                            总成执行监控</span>
                         <span class="text-[10px] font-space text-crrc-red font-bold tracking-widest"></span>
                     </h2>
                     <div class="grid grid-cols-4 gap-4 py-2">
                         <div class="border-r border-zinc-800">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月节拍</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本月节拍</p>
                             <p id="assembly-month-beat" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                         <div class="border-r border-zinc-800 px-2">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月报工</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本月报工</p>
                             <p id="assembly-month-onTime" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                         <div class="border-r border-zinc-800 px-2">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日节拍</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本日节拍</p>
                             <p id="assembly-today-beat" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                         <div class="px-2">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日报工</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本日报工</p>
                             <p id="assembly-today-onTime" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                     </div>
                 </section>
                 <!-- Metric 7-8: Assembly Chart -->
-                <section class="glass-panel p-6 flex-1 flex flex-col min-h-0">
+                <section class="glass-panel p-3 flex-1 flex flex-col min-h-0">
                     <h2
-                        class="text-[22px] font-bold text-zinc-400 mb-6 uppercase tracking-[0.2em] flex items-center gap-2">
+                        class="text-[22px] font-bold text-white font-siyuan mb-2 uppercase tracking-[0.2em] flex items-center gap-2">
                         <span class="w-1 h-3 bg-crrc-red"></span> 总成 7 日趋势分析
                     </h2>
                     <div id="assembly-trend-container" class="flex-1 flex items-end justify-between gap-6 pb-2 px-4">
                     </div>
                     <div
-                        class="mt-4 flex justify-center gap-10 text-[16px] text-zinc-500 font-bold border-t border-zinc-800/50 pt-4">
+                        class="mt-1 flex justify-center gap-10 text-[16px] text-white font-siyuan font-bold border-t border-white/50 pt-2">
                         <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-crrc-red"></span> 节拍兑现率</span>
-                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-zinc-600"></span>
-                            报工准时率</span>
+                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-zinc-300"></span>
+                            准时开完工率</span>
                     </div>
                 </section>
             </div>
@@ -331,51 +332,52 @@
                 <!-- Metric 9: Delivery Monitor Card -->
                 <section class="glass-panel p-5 flex flex-col gap-4 metric-card shrink-0">
                     <h2
-                        class="text-[22px] font-bold text-white border-b border-zinc-800 pb-3 flex items-center justify-between">
-                        <span class="flex items-center gap-2"><span class="w-1.5 h-4 bg-crrc-red"></span> 交车执行监控</span>
+                        class="text-[28px] font-bold text-white font-siyuan border-b border-zinc-800 pb-3 flex items-center justify-between">
+                        <span class="flex items-center gap-2 font-siyuan"><span class="w-1.5 h-4 bg-crrc-red"></span>
+                            交车执行监控</span>
                         <span class="text-[10px] font-space text-crrc-red font-bold tracking-widest"></span>
                     </h2>
                     <div class="grid grid-cols-4 gap-4 py-2">
                         <div class="border-r border-zinc-800">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月节拍</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本月节拍</p>
                             <p id="delivery-month-beat" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                         <div class="border-r border-zinc-800 px-2">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本月报工</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本月报工</p>
                             <p id="delivery-month-onTime" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                         <div class="border-r border-zinc-800 px-2">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日节拍</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本日节拍</p>
                             <p id="delivery-today-beat" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                         <div class="px-2">
-                            <p class="text-[20px] text-zinc-500 uppercase font-bold mb-1">本日报工</p>
+                            <p class="text-[20px] text-white uppercase font-siyuan font-bold mb-1">本日报工</p>
                             <p id="delivery-today-onTime" class="text-3xl font-space font-bold text-white">--%</p>
                         </div>
                     </div>
                 </section>
                 <!-- Metric 10-11: Delivery Chart -->
-                <section class="glass-panel p-6 flex-1 flex flex-col min-h-0">
+                <section class="glass-panel p-3 flex-1 flex flex-col min-h-0">
                     <h2
-                        class="text-[22px] font-bold text-zinc-400 mb-6 uppercase tracking-[0.2em] flex items-center gap-2">
+                        class="text-[22px] font-bold text-white font-siyuan mb-2 uppercase tracking-[0.2em] flex items-center gap-2">
                         <span class="w-1 h-3 bg-crrc-red"></span> 交车 7 日趋势分析
                     </h2>
                     <div id="delivery-trend-container" class="flex-1 flex items-end justify-between gap-6 pb-2 px-4">
                     </div>
                     <div
-                        class="mt-4 flex justify-center gap-10 text-[16px] text-zinc-500 font-bold border-t border-zinc-800/50 pt-4">
+                        class="mt-1 flex justify-center gap-10 text-[16px] text-white font-siyuan font-bold border-t border-white/50 pt-2">
                         <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-crrc-red"></span> 节拍兑现率</span>
-                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-zinc-600"></span>
-                            报工准时率</span>
+                        <span class="flex items-center gap-2"><span class="w-2.5 h-2.5 bg-zinc-300"></span>
+                            准时开完工率</span>
                     </div>
                 </section>
             </div>
         </main>
         <!-- Bottom Ranking Section (12-18) -->
-        <footer class="grid grid-cols-2 gap-6 h-[25%] min-h-0">
+        <footer class="grid grid-cols-2 gap-6 h-[33%] min-h-0 -mt-3">
             <!-- Metric 12-14: Takt Ranking -->
             <section class="glass-panel p-5 flex flex-col min-h-0">
-                <h2 class="text-[22px] font-bold text-white mb-3 flex items-center justify-between">
+                <h2 class="text-[22px] font-siyuan font-bold text-white mb-3 flex items-center justify-between">
                     <span class="flex items-center gap-2">
                         <span class="material-symbols-outlined text-sm text-crrc-red">warning</span>
                         本月节拍兑现率垫底班组
@@ -383,7 +385,8 @@
                     <span class="text-[16px] font-space text-zinc-500 tracking-wider"></span>
                 </h2>
                 <div class="flex-1 flex flex-col min-h-0">
-                    <div class="flex items-center px-4 py-2 text-[16px] font-bold text-zinc-500 bg-white/5 uppercase">
+                    <div
+                        class="flex items-center px-4 py-2 text-[16px] font-siyuan font-bold text-white bg-white/5 uppercase">
                         <span class="w-12">排名</span>
                         <span class="flex-1">班组名称</span>
                         <span class="w-24 text-right">节拍兑现率</span>
@@ -394,18 +397,19 @@
             </section>
             <!-- Metric 15-18: Punctuality Ranking -->
             <section class="glass-panel p-5 flex flex-col min-h-0">
-                <h2 class="text-[22px] font-bold text-white mb-3 flex items-center justify-between">
+                <h2 class="text-[22px] font-siyuan font-bold text-white mb-1 flex items-center justify-between">
                     <span class="flex items-center gap-2">
                         <span class="material-symbols-outlined text-sm text-crrc-red">warning</span>
-                        本月报工准时率垫底班组
+                        <span class="ml-2">本月准时开完工率垫底班组</span>
                     </span>
                     <span class="text-[16px] font-space text-zinc-500 tracking-wider"></span>
                 </h2>
                 <div class="flex-1 flex flex-col min-h-0">
-                    <div class="flex items-center px-4 py-2 text-[16px] font-bold text-zinc-500 bg-white/5 uppercase">
+                    <div
+                        class="flex items-center px-4 py-2 text-[16px] font-siyuan font-bold text-white bg-white/5 uppercase">
                         <span class="w-12">排名</span>
                         <span class="flex-1">班组名称</span>
-                        <span class="w-24 text-right">报工准时率</span>
+                        <span class="w-22 text-right">准时开完工率</span>
                     </div>
                     <div id="on-time-ranking-container" class="flex-1 overflow-y-auto">
                     </div>
