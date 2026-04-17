@@ -83,7 +83,7 @@ def get_workdays_in_last_n_days(n=7):
     获取近N个工作日日期（排除法定节假日和周末）
     返回包含N个工作日的列表
     """
-    cn_holidays = holidays.CN(years=range(2020, 2030)) # type: ignore
+    cn_holidays = holidays.CN(years=range(2020, 2030))  # type: ignore
     workdays = []
     current_date = date.today()
 
@@ -520,6 +520,13 @@ async def get_team_ranking() -> dict:
 # ============================================================
 
 
+@get("/favicon.ico")
+async def favicon() -> Response:
+    """favicon.ico 图标路由"""
+    icon_path = Path("static/favicon.ico")
+    return Response(content=icon_path.read_bytes(), media_type="image/x-icon")
+
+
 @get("/")
 async def index_html() -> Response:
     """根路径路由，返回静态HTML页面"""
@@ -533,8 +540,7 @@ async def index_html() -> Response:
 # ============================================================
 
 app = Litestar(
-    route_handlers=[index_html, get_table_data, get_team_ranking],  # 注册路由处理器
-    debug=True,  # 开启调试模式
+    route_handlers=[index_html, favicon, get_table_data, get_team_ranking],  # 注册路由处理器
     static_files_config=[
         StaticFilesConfig(
             path="/static",  # URL路径前缀
@@ -544,12 +550,7 @@ app = Litestar(
     ],
 )
 
-# ===================== 主程序入口 =====================
 if __name__ == "__main__":
-    # 启动 uvicorn 服务器
-    # - host="0.0.0.0": 监听所有网络接口
-    # - port=12386: 监听端口号
-    # - reload=True: 开启热重载，修改代码后自动重启
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=12383)
