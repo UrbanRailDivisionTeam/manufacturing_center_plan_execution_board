@@ -3,47 +3,54 @@
 # ============================================================
 from pathlib import Path  # 用于处理文件路径
 import mimetypes  # 用于处理文件的MIME类型
-import os  # 用于读取环境变量
+import pandas as pd
 import clickhouse_connect  # ClickHouse数据库连接驱动
-from typing import Optional
+import clickhouse_connect.driver.asyncclient
+import pandas as pd
+from clickhouse_connect.driver import httputil
 from litestar import Litestar, get  # Litestar Web框架
 from litestar.static_files.config import StaticFilesConfig  # 静态文件配置
 from litestar.response import Response  # 响应对象
 from datetime import datetime, time, timedelta, date  # 日期时间处理
 import holidays  # 中国法定节假日
+import asyncio
+import warnings
 
 # ============================================================
 # 1. 配置部分
 # ============================================================
 
-# 明确添加 .js 文件的 MIME 类型，确保浏览器能正确识别脚本
 mimetypes.add_type("application/javascript", ".js")
+warnings.filterwarnings("ignore", category=FutureWarning)
 
-# ClickHouse 连接配置 (从环境变量获取，默认为本地配置)
-# - CH_HOST: 数据库主机地址
-# - CH_PORT: 数据库端口 (默认8123)
-# - CH_USER: 数据库用户名
-# - CH_PASSWORD: 数据库密码
-# - CH_DATABASE: 默认数据库名称
-CH_HOST = os.getenv("CLICKHOUSE_HOST", "10.24.5.59")
-CH_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))
-CH_USER = os.getenv("CLICKHOUSE_USER", "cheakf")
-CH_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "Swq8855830.")
-CH_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "dwd")
 
 # ============================================================
 # 2. 工具函数部分
 # ============================================================
+from contextlib import asynccontextmanager
 
-def get_ch_client():
-    """获取ClickHouse数据库连接客户端"""
-    return clickhouse_connect.get_client(
-        host=CH_HOST,
-        port=CH_PORT,
-        username=CH_USER,
-        password=CH_PASSWORD,
-        database=CH_DATABASE
-    )
+_client = None
+
+
+async def get_client() -> clickhouse_connect.driver.asyncclient.AsyncClient:
+    global _client
+    if _client is None:
+        pool_mgr = httputil.get_pool_manager(
+            maxsize=32,
+            num_pools=2,
+            block=False,  # 关键：池满时不丢弃连接，而是新建临时连接
+            timeout=150,
+        )
+        _client = await clickhouse_connect.get_async_client(
+            host="10.24.5.59",
+            port=8123,
+            username="cheakf",
+            password="Swq8855830.",
+            database="default",
+            pool_mgr=pool_mgr,
+        )
+    return _client
+
 
 def format_time(dt):
     """
@@ -58,66 +65,107 @@ def format_time(dt):
         # 1970年1月1日是ClickHouse中的默认空值，返回空字符串
         if dt.year == 1970 and dt.month == 1 and dt.day == 1:
             return ""
-        return dt.strftime('%m-%d %H:%M')
+        return dt.strftime("%m-%d %H:%M")
     elif isinstance(dt, time):
-        return dt.strftime('%H:%M')
+        return dt.strftime("%H:%M")
     try:
         # 尝试解析ISO格式字符串
         dt_iso = datetime.fromisoformat(str(dt))
         if dt_iso.year == 1970 and dt_iso.month == 1 and dt_iso.day == 1:
             return ""
-        return dt_iso.strftime('%m-%d %H:%M')
+        return dt_iso.strftime("%m-%d %H:%M")
     except (ValueError, TypeError):
         return "--:--"
 
-def is_valid_time(dt):
-    """
-    检查时间是否有效（非空且非1970年1月1日）
-    用于判断实际开工/完工时间是否存在
-    """
-    if dt is None:
-        return False
-    if isinstance(dt, datetime):
-        return not (dt.year == 1970 and dt.month == 1 and dt.day == 1)
-    return False
 
 def get_workdays_in_last_n_days(n=7):
     """
     获取近N个工作日日期（排除法定节假日和周末）
     返回包含N个工作日的列表
     """
-    cn_holidays = holidays.CN(years=range(2020, 2030))
+    cn_holidays = holidays.CN(years=range(2020, 2030))  # type: ignore
     workdays = []
     current_date = date.today()
-    
+
     while len(workdays) < n:
         # 检查是否是节假日或周末（周六=5，周日=6）
         if current_date not in cn_holidays and current_date.weekday() < 5:
             workdays.append(current_date)
         current_date -= timedelta(days=1)
-    
+
     workdays.reverse()
     return workdays
 
-from collections import Counter
 
 # ============================================================
 # 3. API 接口部分
 # ============================================================
 
 ASSEMBLY_TEAMS = [
-    "车内电工班", "车外电工班", "预组装班", "车内钳工班", "车外钳工班",
-    "粘接综合班", "线槽地板班", "内装一班", "内装二班", "调车班",
-    "质检班", "设备工位", "车门工位", "辅助工位"
+    "车内电工班",
+    "车外电工班",
+    "预组装班",
+    "车内钳工班",
+    "车外钳工班",
+    "粘接综合班",
+    "线槽地板班",
+    "内装一班",
+    "内装二班",
+    "调车班",
+    "质检班",
+    "设备工位",
+    "车门工位",
+    "辅助工位",
 ]
 
 DELIVERY_TEAMS = [
-    "校线一班", "校线二班", "调试一班", "调试二班", "调试三班",
-    "调试四班", "落车班"
+    "校线一班",
+    "校线二班",
+    "调试一班",
+    "调试二班",
+    "调试三班",
+    "调试四班",
+    "落车班",
 ]
 
+
+def map_status(table_status):
+    """将表中的工序状态映射为前端期望的状态"""
+    status_mapping = {
+        "待开工": "待开工",
+        "已完工": "已完成",
+        "执行中": "执行中",
+        "已超时": "已超时",
+        "错误-无法判断状态": "待开工",
+    }
+    return status_mapping.get(table_status, "待开工")
+
+
+def get_status_info(status):
+    """根据状态返回 is_overtime 和 is_pending 标志"""
+    return {
+        "待开工": (False, True),
+        "执行中": (False, False),
+        "已完成": (False, False),
+        "已超时": (True, False),
+    }.get(status, (False, False))
+
+
+def build_filter(team, assembly, delivery):
+    """构建班组过滤条件"""
+    if team:
+        return f"AND BILL.`班组名称` = '{team}'"
+    if assembly:
+        return f"AND BILL.`班组名称` IN {tuple(ASSEMBLY_TEAMS)}"
+    if delivery:
+        return f"AND BILL.`班组名称` IN {tuple(DELIVERY_TEAMS)}"
+    return ""
+
+
 @get("/api/table-data")
-async def get_table_data(team: Optional[str] = None, assembly: bool = False, delivery: bool = False) -> dict:
+async def get_table_data(
+    team: str | None = None, assembly: bool = False, delivery: bool = False
+) -> dict:
     """
     获取表格数据的主API接口
     参数:
@@ -129,245 +177,213 @@ async def get_table_data(team: Optional[str] = None, assembly: bool = False, del
         - summary: 汇总统计数据
     """
     try:
-        # 获取ClickHouse数据库连接客户端
-        client = get_ch_client()
-        
-        # ===================== 3.1 主查询 =====================
-        # 查询当前月及近7天的生产计划数据
-        # 包含字段：项目号、车号、节车号、排程时间、计划时间、实际时间、班组、是否兑现节拍、是否准时开完工
-        team_filter = f"AND BILL.`班组名称` = '{team}'" if team else ""
-        assembly_filter = f"AND BILL.`班组名称` IN {tuple(ASSEMBLY_TEAMS)}" if assembly and not team else ""
-        delivery_filter = f"AND BILL.`班组名称` IN {tuple(DELIVERY_TEAMS)}" if delivery and not team else ""
-        if assembly and not team:
-            team_filter = assembly_filter
-        elif delivery and not team:
-            team_filter = delivery_filter
+        client = await get_client()
+        team_filter = build_filter(team, assembly, delivery)
+
         query = f"""
-            SELECT 
-                today() as ch_today,  -- 获取数据库当前日期
-                BILL.`项目号` , 
-                BILL.`车号` , 
-                BILL.`节车号` , 
+            SELECT
+                BILL.`项目号`,
+                BILL.`车号`,
+                BILL.`节车号`,
                 BILL.`工序编码`,
                 BILL.`工序名称`,
-                BILL.`排程开始时间` , 
-                BILL.`排程结束时间` , 
-                BILL.`计划开始时间` , 
-                BILL.`计划结束时间` , 
-                BILL.`实际开始时间` , 
-                BILL.`实际结束时间` , 
-                BILL.`班组名称` , 
-                BILL.`是否兑现节拍` , 
-                BILL.`是否准时开完工` 
-            FROM 
-                dwd.beat_fulfillment_rate BILL 
-            WHERE 
-                ((toStartOfMonth(toDate(BILL.`计划开始时间`)) = toStartOfMonth(today())  -- 本月数据
-                OR toDate(BILL.`实际结束时间`) = today()  -- 今日完工数据
-                OR (toDate(BILL.`计划开始时间`) >= today() - INTERVAL 6 DAY AND toDate(BILL.`计划开始时间`) <= today()))  -- 近7天计划
+                BILL.`排程开始时间`,
+                BILL.`排程结束时间`,
+                BILL.`计划开始时间`,
+                BILL.`计划结束时间`,
+                BILL.`实际开始时间`,
+                BILL.`实际结束时间`,
+                BILL.`班组名称`,
+                BILL.`是否兑现节拍`,
+                BILL.`是否准时开完工`,
+                BILL.`当前工序状态`,
+                BILL.`排程执行时间`,
+                BILL.`计划执行时间`,
+                BILL.`实际执行时间`
+            FROM
+                dwd.beat_fulfillment_rate BILL
+            WHERE
+                ((toStartOfMonth(toDate(BILL.`计划开始时间`)) = toStartOfMonth(today())
+                OR toDate(BILL.`实际结束时间`) = today()
+                OR (toDate(BILL.`计划开始时间`) >= today() - INTERVAL 6 DAY AND toDate(BILL.`计划开始时间`) <= today()))
                 {team_filter})
-            ORDER BY 
+            ORDER BY
                 BILL.`计划开始时间` DESC
         """
-        result = client.query(query)
-
-        # ===================== 3.2 节拍兑现率趋势查询 =====================
-        # 查询近7天的节拍兑现率，按日期分组
-        team_filter = f"AND BILL.`班组名称` = '{team}'" if team else ""
-        assembly_filter = f"AND BILL.`班组名称` IN {tuple(ASSEMBLY_TEAMS)}" if assembly and not team else ""
-        delivery_filter = f"AND BILL.`班组名称` IN {tuple(DELIVERY_TEAMS)}" if delivery and not team else ""
-        if assembly and not team:
-            team_filter = assembly_filter
-        elif delivery and not team:
-            team_filter = delivery_filter
         trend_query = f"""
-            SELECT 
-                toDate(BILL.`计划开始时间`) as plan_date,  -- 计划开工日期
-                COUNT(*) as total,  -- 总数
-                sum(if(BILL.`是否兑现节拍` = '是', 1, 0)) as beat_ok  -- 节拍达标数
-            FROM 
-                dwd.beat_fulfillment_rate BILL 
-            WHERE 
+            SELECT
+                toDate(BILL.`计划开始时间`) as plan_date,
+                COUNT(*) as total,
+                sum(if(BILL.`是否兑现节拍` = '是', 1, 0)) as beat_ok
+            FROM
+                dwd.beat_fulfillment_rate BILL
+            WHERE
                 toDate(BILL.`计划开始时间`) >= today() - INTERVAL 6 DAY
                 AND toDate(BILL.`计划开始时间`) <= today()
                 {team_filter}
             GROUP BY toDate(BILL.`计划开始时间`)
             ORDER BY plan_date
         """
-        trend_result = client.query(trend_query)
-        
-        # ===================== 3.3 准时开完工率趋势查询 =====================
-        # 查询近7天的准时开完工率，按日期分组
-        team_filter = f"AND BILL.`班组名称` = '{team}'" if team else ""
-        assembly_filter = f"AND BILL.`班组名称` IN {tuple(ASSEMBLY_TEAMS)}" if assembly and not team else ""
-        delivery_filter = f"AND BILL.`班组名称` IN {tuple(DELIVERY_TEAMS)}" if delivery and not team else ""
-        if assembly and not team:
-            team_filter = assembly_filter
-        elif delivery and not team:
-            team_filter = delivery_filter
         ontime_trend_query = f"""
-            SELECT 
-                toDate(BILL.`计划开始时间`) as plan_date,  -- 计划开工日期
-                COUNT(*) as total,  -- 总数
-                sum(if(BILL.`是否准时开完工` = '是', 1, 0)) as on_time_ok  -- 准时数
-            FROM 
-                dwd.beat_fulfillment_rate BILL 
-            WHERE 
+            SELECT
+                toDate(BILL.`计划开始时间`) as plan_date,
+                COUNT(*) as total,
+                sum(if(BILL.`是否准时开完工` = '是', 1, 0)) as on_time_ok
+            FROM
+                dwd.beat_fulfillment_rate BILL
+            WHERE
                 toDate(BILL.`计划开始时间`) >= today() - INTERVAL 6 DAY
                 AND toDate(BILL.`计划开始时间`) <= today()
                 {team_filter}
             GROUP BY toDate(BILL.`计划开始时间`)
             ORDER BY plan_date
         """
-        ontime_trend_result = client.query(ontime_trend_query)
-        
-        # ===================== 3.4 初始化统计变量 =====================
-        table_data = []  # 表格数据列表
-        status_counts = Counter()  # 状态计数（待开工、执行中、已超时）
-        now = datetime.now()  # 当前时间，用于判断是否超时
-        
-        # 今日概况统计
-        today_scheduled = 0  # 今日应完工序数量（计划开工时间为今日）
-        today_completed = 0  # 今日已完成数量（实际结束时间为今日）
-        today_remaining = 0  # 今日剩余数量
-        
-        # 今日指标统计
-        today_beat_ok = 0  # 今日节拍达标数
-        today_on_time_ok = 0  # 今日准时数
-        
-        # 本月指标统计
-        month_total = 0  # 本月总数量
-        month_beat_ok = 0  # 本月节拍达标数
-        month_on_time_ok = 0  # 本月准时数
+        df, trend_df, ontime_trend_df = await asyncio.gather(
+            client.query_df(query),
+            client.query_df(trend_query),
+            client.query_df(ontime_trend_query),
+        )
 
-        # 近7日趋势数据初始化
-        last_7_days_beat = []  # 节拍率趋势
-        last_7_days_on_time = []  # 准时率趋势
-        
-        # 初始化近7日字典，按日期聚合
-        days_dict = {}
-        for i in range(7):
-            d = (date.today() - timedelta(days=6-i))
-            days_dict[d] = {"total": 0, "beat_ok": 0, "on_time_ok": 0}
-
-        # 使用本地 today() 进行日期比较，避免时区差异
         local_today = date.today()
-        print(f"DEBUG: local_today = {local_today}")
 
-        # 调试：检查数据处理前的准备
-        if not result.result_rows:
-            print("DEBUG: 查询结果为空")
+        df["计划开始时间"] = pd.to_datetime(
+            df["计划开始时间"], errors="coerce"
+        ).dt.tz_localize(None)
+        df["计划结束时间"] = pd.to_datetime(
+            df["计划结束时间"], errors="coerce"
+        ).dt.tz_localize(None)
+        df["实际开始时间"] = pd.to_datetime(
+            df["实际开始时间"], errors="coerce"
+        ).dt.tz_localize(None)
+        df["实际结束时间"] = pd.to_datetime(
+            df["实际结束时间"], errors="coerce"
+        ).dt.tz_localize(None)
 
-        for row in result.named_results():
-            # ===================== 3.5 处理每条记录 =====================
-            
-            # 统一处理时间字段，移除时区信息（避免时区差异问题）
-            plan_start = row['计划开始时间'].replace(tzinfo=None) if row['计划开始时间'] else None
-            plan_end = row['计划结束时间'].replace(tzinfo=None) if row['计划结束时间'] else None
-            actual_start = row['实际开始时间'].replace(tzinfo=None) if row['实际开始时间'] else None
-            actual_end = row['实际结束时间'].replace(tzinfo=None) if row['实际结束时间'] else None
-            
-            # 适配新的字段逻辑：判断是否完工
-            is_finished = actual_end is not None
-            dispatch_status = "完工" if is_finished else ("开工" if actual_start else "待开工")
+        df["is_today"] = df["计划开始时间"].dt.date == local_today
+        df["is_month"] = (df["计划开始时间"].dt.year == local_today.year) & (
+            df["计划开始时间"].dt.month == local_today.month
+        )
+        df["is_finished_today"] = df["实际结束时间"].dt.date == local_today
+        df["plan_date"] = df["计划开始时间"].dt.date
 
-            # ===================== 计算状态 =====================
-            # 状态分为三种：待开工、执行中、已超时
-            status = "待开工"  # 默认状态
-            is_pending = True  # 是否待开工
-            is_overtime = False  # 是否超时
-            
-            # 检查实际开工时间是否有效（非空且非1970年）
-            has_actual_start = is_valid_time(actual_start)
-            # 检查实际完工时间是否有效（非空且非1970年）
-            has_actual_end = is_valid_time(actual_end)
-            
-            if has_actual_start and has_actual_end:
-                # 已完工: 实际开工时间和实际结束时间都存在
-                status = "已完成"
-                is_pending = False
-            elif has_actual_start and not has_actual_end:
-                # 执行中: 实际开工时间存在且实际结束时间不存在
-                status = "执行中"
-                is_pending = False
-                if plan_end and now > plan_end:
-                    # 已超时: 当前时间 > 计划结束时间
-                    status = "已超时"
-                    is_overtime = True
-            
-            # ===================== 统计本月指标 =====================
-            # 严格按照用户要求：
-            # - 分母：本月实际结束时间不为空且不为1970-01-01的数据数量
-            # - 分子：实际时长 <= 排程时长的数据数量
-            if plan_start and plan_start.year == local_today.year and plan_start.month == local_today.month:
-                if is_valid_time(actual_end):
-                    month_total += 1
-                    scheduled_duration_val = (plan_end - plan_start).total_seconds() / 60 if plan_start and plan_end else None
-                    actual_duration_val = (actual_end - actual_start).total_seconds() / 60 if actual_start else None
-                    if scheduled_duration_val is not None and actual_duration_val is not None and actual_duration_val <= scheduled_duration_val:
-                        month_beat_ok += 1
-                if row['是否准时开完工'] == '是':
-                    month_on_time_ok += 1
+        status_counts = df[df["is_today"]]["当前工序状态"].value_counts().to_dict()
+        status_counts = {map_status(k): v for k, v in status_counts.items()}
 
-            # ===================== 统计今日概况 =====================
-            # 应完工序数量：统计计划开工时间为今日的数据数量
-            if plan_start and plan_start.date() == local_today:
-                today_scheduled += 1
-                if is_valid_time(actual_end):
-                    scheduled_duration_val = (plan_end - plan_start).total_seconds() / 60 if plan_start and plan_end else None
-                    actual_duration_val = (actual_end - actual_start).total_seconds() / 60 if actual_start else None
-                    if scheduled_duration_val is not None and actual_duration_val is not None and actual_duration_val <= scheduled_duration_val:
-                        today_beat_ok += 1
-                if row['是否准时开完工'] == '是':
-                    today_on_time_ok += 1
-            # 已完成数量：统计实际结束时间为今日的数据数量
-            if actual_end and actual_end.date() == local_today:
-                today_completed += 1
+        today_scheduled = int(df["is_today"].sum())
+        today_completed = int(df["is_finished_today"].sum())
 
-            # ===================== 近7日趋势统计 =====================
-            # 按计划开工日期聚合统计
-            if plan_start:
-                p_date = plan_start.date()
-                if p_date in days_dict:
-                    days_dict[p_date]["total"] += 1
-                    if row['是否兑现节拍'] == '是':
-                        days_dict[p_date]["beat_ok"] += 1
-                    if row['是否准时开完工'] == '是':
-                        days_dict[p_date]["on_time_ok"] += 1
+        month_df = df[df["is_month"]]
+        month_total = len(month_df)
+        month_beat_ok = int((month_df["是否兑现节拍"] == "是").sum())
+        month_on_time_ok = int((month_df["是否准时开完工"] == "是").sum())
 
-            # ===================== 仅展示当日数据到执行队列 =====================
-            # 只展示计划开始时间为当日的数据
-            if plan_start and plan_start.date() == local_today:
-                status_counts[status] += 1
-                
-                # ===================== 计算时长 =====================
-                # 计划时长：计划结束时间 - 计划开始时间
-                scheduled_duration = "--"
-                if plan_start and plan_end:
-                    scheduled_duration = f"{int((plan_end - plan_start).total_seconds() / 60)}M"
+        today_df = df[df["is_today"]]
+        today_beat_ok = int((today_df["是否兑现节拍"] == "是").sum())
+        today_on_time_ok = int((today_df["是否准时开完工"] == "是").sum())
 
-                # 执行时长：实际结束时间 - 实际开始时间（两者都有效且非1970-01-01）
-                execution_duration = "--"
-                if is_valid_time(actual_start) and is_valid_time(actual_end):
-                    execution_duration = f"{int((actual_end - actual_start).total_seconds() / 60)}M"
+        workdays = get_workdays_in_last_n_days(7)
+        trend_days_dict = {
+            d: {"total": 0, "beat_ok": 0, "on_time_ok": 0} for d in workdays
+        }
 
-                # ===================== 状态颜色映射 =====================
-                # 根据状态类型返回对应的CSS类名，用于前端显示
-                status_map = {
-                    "已超时": "bg-primary-container text-white",
-                    "执行中": "bg-[#00C853] text-white",
-                    "待开工": "bg-surface-container-highest text-on-surface",
-                    "已完成": "bg-[#00C853] text-white"
-                }
+        for _, row in trend_df.iterrows():
+            p_date = (
+                row["plan_date"].date()
+                if hasattr(row["plan_date"], "date")
+                else row["plan_date"]
+            )
+            if p_date in trend_days_dict:
+                trend_days_dict[p_date]["total"] = row["total"]
+                trend_days_dict[p_date]["beat_ok"] = row["beat_ok"]
 
-                table_data.append({
+        last_7_days_beat = []
+        for d in sorted(trend_days_dict.keys()):
+            day_data = trend_days_dict[d]
+            beat_rate = (
+                round((day_data["beat_ok"] / day_data["total"] * 100), 1)
+                if day_data["total"] > 0
+                else 0
+            )
+            last_7_days_beat.append({"date": d.strftime("%m-%d"), "rate": beat_rate})
+
+        last_7_days_on_time = []
+        if team:
+            ontime_days_dict = {d: {"total": 0, "on_time_ok": 0} for d in workdays}
+            for _, row in ontime_trend_df.iterrows():
+                p_date = (
+                    row["plan_date"].date()
+                    if hasattr(row["plan_date"], "date")
+                    else row["plan_date"]
+                )
+                if p_date in ontime_days_dict:
+                    ontime_days_dict[p_date]["total"] = row["total"]
+                    ontime_days_dict[p_date]["on_time_ok"] = row["on_time_ok"]
+            for d in sorted(ontime_days_dict.keys()):
+                day_data = ontime_days_dict[d]
+                on_time_rate = (
+                    round((day_data["on_time_ok"] / day_data["total"] * 100), 1)
+                    if day_data["total"] > 0
+                    else 0
+                )
+                last_7_days_on_time.append(
+                    {"date": d.strftime("%m-%d"), "rate": on_time_rate}
+                )
+        else:
+            days_grouped = df.groupby("plan_date").agg(
+                total=("项目号", "count"),
+                beat_ok=("是否兑现节拍", lambda x: (x == "是").sum()),
+                on_time_ok=("是否准时开完工", lambda x: (x == "是").sum()),
+            )
+            for d in workdays:
+                if d in days_grouped.index:
+                    day_data = days_grouped.loc[d]
+                    on_time_rate = (
+                        round((day_data["on_time_ok"] / day_data["total"] * 100), 1)
+                        if day_data["total"] > 0
+                        else 0
+                    )
+                    last_7_days_on_time.append(
+                        {"date": d.strftime("%m-%d"), "rate": on_time_rate}
+                    )
+
+        status_map = {
+            "已超时": "bg-primary-container text-white",
+            "执行中": "bg-[#00C853] text-white",
+            "待开工": "bg-surface-container-highest text-on-surface",
+            "已完成": "bg-[#00C853] text-white",
+        }
+
+        table_data = []
+        today_rows = df[df["is_today"]].copy()
+        for _, row in today_rows.iterrows():
+            status = map_status(row["当前工序状态"])
+            is_overtime, is_pending = get_status_info(status)
+
+            plan_start = row["计划开始时间"]
+            plan_end = row["计划结束时间"]
+            actual_start = row["实际开始时间"]
+            actual_end = row["实际结束时间"]
+
+            scheduled_duration = (
+                f"{int(row['计划执行时间'])}M"
+                if pd.notna(row.get("计划执行时间")) and row["计划执行时间"] > 0
+                else "--"
+            )
+            execution_duration = (
+                f"{int(row['实际执行时间'])}M"
+                if pd.notna(row.get("实际执行时间")) and row["实际执行时间"] > 0
+                else "--"
+            )
+
+            table_data.append(
+                {
                     "status": status,
                     "status_class": status_map.get(status, ""),
-                    "project": row['项目号'],
-                    "train_no": row['车号'],
-                    "car_no": row['节车号'],
-                    "process_code": row['工序编码'],
-                    "process_name": row['工序名称'],
+                    "project": row["项目号"],
+                    "train_no": row["车号"],
+                    "car_no": row["节车号"],
+                    "process_code": row["工序编码"],
+                    "process_name": row["工序名称"],
                     "plan_start": format_time(plan_start),
                     "plan_end": format_time(plan_end),
                     "actual_start": format_time(actual_start),
@@ -375,102 +391,61 @@ async def get_table_data(team: Optional[str] = None, assembly: bool = False, del
                     "scheduled_duration": scheduled_duration,
                     "execution_duration": execution_duration,
                     "is_overtime": is_overtime,
-                    "is_pending": is_pending
-                })
-        
-        # ===================== 3.6 计算百分比指标 =====================
-        # 本月节拍兑现率 = 本月节拍达标数 / 本月总数 * 100
-        month_beat_rate = round((month_beat_ok / month_total * 100), 1) if month_total > 0 else 0
-        # 本月准时开完工率 = 本月准时数 / 本月总数 * 100
-        month_on_time_rate = round((month_on_time_ok / month_total * 100), 1) if month_total > 0 else 0
-        
-        # 今日节拍兑现率
-        today_beat_rate = round((today_beat_ok / today_scheduled * 100), 1) if today_scheduled > 0 else 0
-        # 今日准时开完工率
-        today_on_time_rate = round((today_on_time_ok / today_scheduled * 100), 1) if today_scheduled > 0 else 0
-        
-        # 计算剩余量 (严格按照用户要求: 应完工序数量 - 已完成数量)
-        # 增加 max(0) 保护，防止负数显示
+                    "is_pending": is_pending,
+                }
+            )
+
+        month_beat_rate = (
+            round((month_beat_ok / month_total * 100), 1) if month_total > 0 else 0
+        )
+        month_on_time_rate = (
+            round((month_on_time_ok / month_total * 100), 1) if month_total > 0 else 0
+        )
+        today_beat_rate = (
+            round((today_beat_ok / today_scheduled * 100), 1)
+            if today_scheduled > 0
+            else 0
+        )
+        today_on_time_rate = (
+            round((today_on_time_ok / today_scheduled * 100), 1)
+            if today_scheduled > 0
+            else 0
+        )
         today_remaining = max(0, today_scheduled - today_completed)
-        
-        # ===================== 3.7 计算近7日趋势数据 =====================
-        # 使用 trend_result 独立查询的数据来计算节拍率趋势
-        
-        # 初始化近7日趋势字典（仅工作日）
-        trend_days_dict = {}
-        workdays = get_workdays_in_last_n_days(7)
-        for d in workdays:
-            trend_days_dict[d] = {"total": 0, "beat_ok": 0, "on_time_ok": 0}
-        
-        # 填充节拍率趋势数据
-        for trend_row in trend_result.named_results():
-            p_date = trend_row['plan_date']
-            if p_date in trend_days_dict:
-                trend_days_dict[p_date]["total"] = trend_row['total']
-                trend_days_dict[p_date]["beat_ok"] = trend_row['beat_ok']
-        
-        # 转换为百分比列表格式
-        for d in sorted(trend_days_dict.keys()):
-            day_data = trend_days_dict[d]
-            beat_rate = round((day_data["beat_ok"] / day_data["total"] * 100), 1) if day_data["total"] > 0 else 0
-            last_7_days_beat.append({"date": d.strftime("%m-%d"), "rate": beat_rate})
-        
-        # ===================== 计算准时率趋势 =====================
-        # 使用 team 参数控制准时率趋势数据
-        if team:
-            # 使用独立查询的准时率数据
-            ontime_days_dict = {}
-            for d in workdays:
-                ontime_days_dict[d] = {"total": 0, "on_time_ok": 0}
-            
-            for ontime_row in ontime_trend_result.named_results():
-                p_date = ontime_row['plan_date']
-                if p_date in ontime_days_dict:
-                    ontime_days_dict[p_date]["total"] = ontime_row['total']
-                    ontime_days_dict[p_date]["on_time_ok"] = ontime_row['on_time_ok']
-            
-            for d in sorted(ontime_days_dict.keys()):
-                day_data = ontime_days_dict[d]
-                on_time_rate = round((day_data["on_time_ok"] / day_data["total"] * 100), 1) if day_data["total"] > 0 else 0
-                last_7_days_on_time.append({"date": d.strftime("%m-%d"), "rate": on_time_rate})
-        else:
-            # 使用全量数据（仅工作日）
-            for d in workdays:
-                if d in days_dict:
-                    day_data = days_dict[d]
-                    on_time_rate = round((day_data["on_time_ok"] / day_data["total"] * 100), 1) if day_data["total"] > 0 else 0
-                    last_7_days_on_time.append({"date": d.strftime("%m-%d"), "rate": on_time_rate})
-        
-        # ===================== 3.8 构建返回结果 =====================
-        return  {
-            "table_data": table_data,  # 今日执行队列数据
+
+        return {
+            "table_data": table_data,
             "summary": {
-                "total_count": len(table_data),  # 执行队列总条数
-                "overdue": status_counts["已超时"],  # 已超时数量
-                "in_progress": status_counts["执行中"],  # 执行中数量
-                "pending": status_counts["待开工"],  # 待开工数量
-                "today_scheduled": today_scheduled,  # 今日应完工序数量
-                "today_completed": today_completed,  # 今日已完成数量
-                "today_remaining": today_remaining,  # 今日剩余数量
-                "month_beat_rate": month_beat_rate,  # 本月节拍兑现率
-                "month_on_time_rate": month_on_time_rate,  # 本月准时开完工率
-                "today_beat_rate": today_beat_rate,  # 今日节拍兑现率
-                "today_on_time_rate": today_on_time_rate,  # 今日准时开完工率
-                "last_7_days_beat": last_7_days_beat,  # 近7日节拍率趋势
-                "last_7_days_on_time": last_7_days_on_time  # 近7日准时率趋势
-            }
+                "total_count": len(table_data),
+                "overdue": status_counts.get("已超时", 0),
+                "in_progress": status_counts.get("执行中", 0),
+                "pending": status_counts.get("待开工", 0),
+                "today_scheduled": today_scheduled,
+                "today_completed": today_completed,
+                "today_remaining": today_remaining,
+                "month_beat_rate": month_beat_rate,
+                "month_on_time_rate": month_on_time_rate,
+                "today_beat_rate": today_beat_rate,
+                "today_on_time_rate": today_on_time_rate,
+                "last_7_days_beat": last_7_days_beat,
+                "last_7_days_on_time": last_7_days_on_time,
+            },
         }
     except Exception as e:
-        # ===================== 3.9 异常处理 =====================
         print(f"Error fetching data from ClickHouse: {e}")
         return {
-            "table_data": [], 
+            "table_data": [],
             "summary": {
                 "total_count": 0,
-                "overdue": 0, "in_progress": 0, "pending": 0,
-                "today_scheduled": 0, "today_completed": 0, "today_remaining": 0
-            }
+                "overdue": 0,
+                "in_progress": 0,
+                "pending": 0,
+                "today_scheduled": 0,
+                "today_completed": 0,
+                "today_remaining": 0,
+            },
         }
+
 
 @get("/api/team-ranking")
 async def get_team_ranking() -> dict:
@@ -479,18 +454,18 @@ async def get_team_ranking() -> dict:
     返回倒数前7名班组
     """
     try:
-        client = get_ch_client()
-        
+        client = await get_client()
+
         all_teams = ASSEMBLY_TEAMS + DELIVERY_TEAMS
-        
+
         beat_ranking_query = f"""
-            SELECT 
+            SELECT
                 BILL.`班组名称` as team_name,
                 COUNT(*) as total,
                 sum(if(BILL.`是否兑现节拍` = '是', 1, 0)) as beat_ok
-            FROM 
-                dwd.beat_fulfillment_rate BILL 
-            WHERE 
+            FROM
+                dwd.beat_fulfillment_rate BILL
+            WHERE
                 toStartOfMonth(toDate(BILL.`计划开始时间`)) = toStartOfMonth(today())
                 AND BILL.`班组名称` IN {tuple(all_teams)}
             GROUP BY BILL.`班组名称`
@@ -498,16 +473,14 @@ async def get_team_ranking() -> dict:
             ORDER BY beat_ok / total ASC
             LIMIT 7
         """
-        beat_result = client.query(beat_ranking_query)
-        
         on_time_ranking_query = f"""
-            SELECT 
+            SELECT
                 BILL.`班组名称` as team_name,
                 COUNT(*) as total,
                 sum(if(BILL.`是否准时开完工` = '是', 1, 0)) as on_time_ok
-            FROM 
-                dwd.beat_fulfillment_rate BILL 
-            WHERE 
+            FROM
+                dwd.beat_fulfillment_rate BILL
+            WHERE
                 toStartOfMonth(toDate(BILL.`计划开始时间`)) = toStartOfMonth(today())
                 AND BILL.`班组名称` IN {tuple(all_teams)}
             GROUP BY BILL.`班组名称`
@@ -515,74 +488,69 @@ async def get_team_ranking() -> dict:
             ORDER by on_time_ok / total ASC
             LIMIT 7
         """
-        on_time_result = client.query(on_time_ranking_query)
-        
-        beat_ranking = []
-        for row in beat_result.named_results():
-            total = row['total']
-            beat_ok = row['beat_ok']
-            rate = round((beat_ok / total * 100), 1) if total > 0 else 0
-            beat_ranking.append({
-                "team_name": row['team_name'],
-                "rate": rate
-            })
-        
-        on_time_ranking = []
-        for row in on_time_result.named_results():
-            total = row['total']
-            on_time_ok = row['on_time_ok']
-            rate = round((on_time_ok / total * 100), 1) if total > 0 else 0
-            on_time_ranking.append({
-                "team_name": row['team_name'],
-                "rate": rate
-            })
-        
-        return {
-            "beat_ranking": beat_ranking,
-            "on_time_ranking": on_time_ranking
-        }
+        beat_df, on_time_df = await asyncio.gather(
+            client.query_df(beat_ranking_query),
+            client.query_df(on_time_ranking_query),
+        )
+
+        beat_df["rate"] = beat_df.apply(
+            lambda r: round((r["beat_ok"] / r["total"] * 100), 1)
+            if r["total"] > 0
+            else 0,
+            axis=1,
+        )
+        on_time_df["rate"] = on_time_df.apply(
+            lambda r: round((r["on_time_ok"] / r["total"] * 100), 1)
+            if r["total"] > 0
+            else 0,
+            axis=1,
+        )
+
+        beat_ranking = beat_df[["team_name", "rate"]].to_dict("records")
+        on_time_ranking = on_time_df[["team_name", "rate"]].to_dict("records")
+
+        return {"beat_ranking": beat_ranking, "on_time_ranking": on_time_ranking}
     except Exception as e:
         print(f"Error fetching team ranking: {e}")
-        return {
-            "beat_ranking": [],
-            "on_time_ranking": []
-        }
+        return {"beat_ranking": [], "on_time_ranking": []}
+
 
 # ============================================================
 # 4. 静态页面路由
 # ============================================================
+
+
+@get("/favicon.ico")
+async def favicon() -> Response:
+    """favicon.ico 图标路由"""
+    icon_path = Path("static/favicon.ico")
+    return Response(content=icon_path.read_bytes(), media_type="image/x-icon")
+
 
 @get("/")
 async def index_html() -> Response:
     """根路径路由，返回静态HTML页面"""
     html_path = Path("static/index.html")
     html_content = html_path.read_text(encoding="utf-8")
-    return Response(
-        content=html_content,
-        media_type="text/html"
-    )
+    return Response(content=html_content, media_type="text/html")
+
 
 # ============================================================
 # 5. 应用启动配置
 # ============================================================
 
 app = Litestar(
-    route_handlers=[index_html, get_table_data, get_team_ranking],  # 注册路由处理器
-    debug=True,  # 开启调试模式
+    route_handlers=[index_html, favicon, get_table_data, get_team_ranking],  # 注册路由处理器
     static_files_config=[
         StaticFilesConfig(
             path="/static",  # URL路径前缀
             directories=["static"],  # 静态文件目录
-            name="static"
+            name="static",
         )
-    ]
+    ],
 )
 
-# ===================== 主程序入口 =====================
 if __name__ == "__main__":
-    # 启动 uvicorn 服务器
-    # - host="0.0.0.0": 监听所有网络接口
-    # - port=12386: 监听端口号
-    # - reload=True: 开启热重载，修改代码后自动重启
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=12383)
